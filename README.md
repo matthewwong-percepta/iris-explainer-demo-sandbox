@@ -11,3 +11,9 @@ limiter.check("user-123"); // { allowed: true, remaining: 9 }
 ```
 
 Run the tests with `npm test`.
+
+## When to use it
+
+It keeps all state in memory, so it suits a single process: a CLI, a worker,
+or one server instance. Behind a load balancer each instance would count
+separately; use a shared store (Redis, for example) for that.
