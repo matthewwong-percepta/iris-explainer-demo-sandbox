@@ -1,21 +1,26 @@
-// A fixed-window rate limiter: each key gets `limit` requests per window.
-// The window starts at a multiple of `windowMs`, so a burst at the end of one
-// window and the start of the next can let through up to 2x `limit`.
+// A sliding-window rate limiter: each key gets `limit` requests in any
+// `windowMs`-long span. It keeps the timestamps of recent requests per key
+// (a "sliding log"), so unlike a fixed window there is no 2x burst at a
+// window boundary.
 
 export function createLimiter({ limit = 10, windowMs = 60_000, now = Date.now } = {}) {
-  const windows = new Map(); // key -> { start, count }
+  const logs = new Map(); // key -> sorted timestamps of allowed requests
+
+  function prune(log, t) {
+    while (log.length && log[0] <= t - windowMs) log.shift();
+  }
 
   function check(key) {
     const t = now();
-    const start = Math.floor(t / windowMs) * windowMs;
-    let w = windows.get(key);
-    if (!w || w.start !== start) {
-      w = { start, count: 0 };
-      windows.set(key, w);
+    let log = logs.get(key);
+    if (!log) {
+      log = [];
+      logs.set(key, log);
     }
-    if (w.count >= limit) return { allowed: false, remaining: 0 };
-    w.count += 1;
-    return { allowed: true, remaining: limit - w.count };
+    prune(log, t);
+    if (log.length >= limit) return { allowed: false, remaining: 0 };
+    log.push(t);
+    return { allowed: true, remaining: limit - log.length };
   }
 
   return { check };
