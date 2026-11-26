@@ -3,11 +3,20 @@
 // (a "sliding log"), so unlike a fixed window there is no 2x burst at a
 // window boundary.
 
-export function createLimiter({ limit = 10, windowMs = 60_000, now = Date.now } = {}) {
-  const logs = new Map(); // key -> sorted timestamps of allowed requests
+// `limits` overrides the default per key, e.g. { "partner-api": { limit: 100 } }.
+// A function can be passed instead, to look limits up dynamically.
 
-  function prune(log, t) {
-    while (log.length && log[0] <= t - windowMs) log.shift();
+export function createLimiter({ limit = 10, windowMs = 60_000, limits = {}, now = Date.now } = {}) {
+  const logs = new Map(); // key -> sorted timestamps of allowed requests
+  const lookup = typeof limits === "function" ? limits : (key) => limits[key];
+
+  function configFor(key) {
+    const o = lookup(key) ?? {};
+    return { limit: o.limit ?? limit, windowMs: o.windowMs ?? windowMs };
+  }
+
+  function prune(log, t, span) {
+    while (log.length && log[0] <= t - span) log.shift();
   }
 
   function check(key) {
@@ -17,10 +26,11 @@ export function createLimiter({ limit = 10, windowMs = 60_000, now = Date.now } 
       log = [];
       logs.set(key, log);
     }
-    prune(log, t);
-    if (log.length >= limit) return { allowed: false, remaining: 0 };
+    const cfg = configFor(key);
+    prune(log, t, cfg.windowMs);
+    if (log.length >= cfg.limit) return { allowed: false, remaining: 0, limit: cfg.limit };
     log.push(t);
-    return { allowed: true, remaining: limit - log.length };
+    return { allowed: true, remaining: cfg.limit - log.length, limit: cfg.limit };
   }
 
   return { check };

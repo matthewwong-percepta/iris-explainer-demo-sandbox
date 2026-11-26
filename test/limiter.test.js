@@ -28,3 +28,20 @@ test("no burst across a window boundary", () => {
   t = 1901;
   assert.equal(l.check("a").allowed, true);
 });
+
+test("per-key limits override the default", () => {
+  let t = 0;
+  const l = createLimiter({ limit: 1, windowMs: 1000, limits: { vip: { limit: 3 } }, now: () => t });
+  assert.equal(l.check("a").allowed, true);
+  assert.equal(l.check("a").allowed, false);
+  assert.equal(l.check("vip").remaining, 2);
+  assert.equal(l.check("vip").remaining, 1);
+  assert.equal(l.check("vip").remaining, 0);
+  assert.equal(l.check("vip").allowed, false);
+});
+
+test("limits can be a function", () => {
+  const l = createLimiter({ limit: 1, limits: (key) => (key.startsWith("internal-") ? { limit: 5 } : undefined), now: () => 0 });
+  assert.equal(l.check("internal-cron").limit, 5);
+  assert.equal(l.check("someone").limit, 1);
+});
