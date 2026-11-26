@@ -17,8 +17,8 @@ on:
 permissions:
   contents: read
   id-token: write # mint the OIDC token the service checks
-  issues: write # reactions and replies
-  pull-requests: read
+  issues: write
+  pull-requests: write # comments and reactions on a PR count as pull-request writes
 
 concurrency:
   group: iris-explain-${{ github.event.issue.number }}
