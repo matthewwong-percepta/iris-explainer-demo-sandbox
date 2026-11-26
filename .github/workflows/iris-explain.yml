@@ -1,6 +1,6 @@
 # Comment "@iris-explain" on a pull request to get a narrated explainer of it
-# and the rest of its stack. "@iris-explain #3 #5" explains exactly those PRs
-# (plus this one) instead of discovering the stack.
+# and the rest of its stack (the explainer's session finds the stack).
+# "@iris-explain #3 #5" explains exactly those PRs (plus this one) instead.
 #
 # The run proves it comes from this repo with a GitHub OIDC token (no secret
 # in the repo); the explainer service checks it, starts the job, and this
@@ -46,60 +46,14 @@ jobs:
             await react("eyes");
             if (!base) return core.setFailed("Set the EXPLAINER_URL repository variable");
 
-            // ---- Which PRs: the ones the comment names, else this PR's whole stack.
-            const all = await github.paginate(github.rest.pulls.list, { owner, repo, state: "all", per_page: 100 }, (r, done) => {
-              if (r.data.length && Date.parse(r.data.at(-1).created_at) < Date.now() - 180 * 864e5) done();
-              return r.data;
-            });
-            const byNumber = new Map(all.map((p) => [p.number, p]));
-            const live = (p) => p.state === "open" || p.merged_at; // ignore PRs closed without merging
-            const sameRepo = (p) => p.head.repo && p.head.repo.full_name === `${owner}/${repo}`;
-            const self = byNumber.get(issue_number) ?? (await github.rest.pulls.get({ owner, repo, pull_number: issue_number })).data;
-            const { data: repoInfo } = await github.rest.repos.get({ owner, repo });
-
+            // ---- Which PRs: this one plus any the comment names, or else this one
+            // and its stack, which the explainer's session works out.
             const named = [...context.payload.comment.body.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
-            let set = new Map([[self.number, self]]);
-            if (named.length) {
-              for (const n of named) if (byNumber.has(n)) set.set(n, byNumber.get(n));
-            } else {
-              // Down: follow base branches to the PR that owns each one, until the default branch.
-              let cur = self;
-              while (cur.base.ref !== repoInfo.default_branch && set.size < 10) {
-                const below = all.filter((p) => live(p) && sameRepo(p) && p.head.ref === cur.base.ref && !set.has(p.number))
-                  .sort((a, b) => (b.state === "open") - (a.state === "open") || b.number - a.number)[0];
-                if (!below) break;
-                set.set(below.number, below);
-                cur = below;
-              }
-              // Up: PRs based on any branch already in the set (a stack can fork into a tree).
-              for (let grew = true; grew && set.size < 10; ) {
-                grew = false;
-                const heads = new Set([...set.values()].map((p) => p.head.ref));
-                for (const p of all) {
-                  if (set.size >= 10) break;
-                  if (live(p) && sameRepo(p) && heads.has(p.base.ref) && !set.has(p.number)) { set.set(p.number, p); grew = true; }
-                }
-              }
-              // Fallback for stacks where every PR targets the default branch:
-              // open PRs whose head contains this PR's head commit, or vice versa.
-              if (set.size === 1 && self.base.ref === repoInfo.default_branch) {
-                const candidates = all.filter((p) => p.state === "open" && p.number !== self.number && p.base.ref === self.base.ref).slice(0, 20);
-                for (const p of candidates) {
-                  for (const [older, newer] of [[self, p], [p, self]]) {
-                    const { data: cmp } = await github.rest.repos.compareCommits({ owner, repo, base: older.head.sha, head: newer.head.sha }).catch(() => ({ data: {} }));
-                    if (cmp.status === "ahead" || cmp.status === "identical") { set.set(p.number, p); break; }
-                  }
-                }
-              }
-            }
-            // Bottom of the stack first: a PR comes after the PR whose branch it's based on.
-            const prs = [...set.values()];
-            const depth = (p, seen = new Set()) => {
-              const below = prs.find((q) => q.head.ref === p.base.ref && !seen.has(q.number));
-              return below ? 1 + depth(below, seen.add(p.number)) : 0;
-            };
-            const numbers = prs.sort((a, b) => depth(a) - depth(b) || a.number - b.number).map((p) => p.number);
-            const list = numbers.map((n) => `#${n}`).join(", ");
+            const request = named.length
+              ? { prs: [...new Set([issue_number, ...named])] }
+              : { prs: [issue_number], stack: true };
+            const asked = request.prs.map((n) => `#${n}`).join(", ");
+            const list = request.stack ? `${asked} and its stack (if any)` : asked;
             core.info(`Explaining ${list}`);
 
             // ---- Start the job, proving this run's repo with an OIDC token.
@@ -120,7 +74,7 @@ jobs:
 
             let job;
             try {
-              job = await call("POST", "/api/github/explain", { prs: numbers });
+              job = await call("POST", "/api/github/explain", request);
             } catch (e) {
               await update(`⚠️ Couldn't start the explainer for ${list}: ${e.message}`);
               await react("confused");
@@ -136,8 +90,9 @@ jobs:
               core.info(`${job.status}: ${job.activity ?? ""}`);
             }
 
+            const done = (job.prs ?? []).map((n) => `#${n}`).join(", ") || list;
             if (job.viewUrl) {
-              await update(`✅ Explainer for ${list} is ready: **[watch it](${job.viewUrl})**\n\n<sub>${job.result ?? ""}</sub>`);
+              await update(`✅ Explainer for ${done} is ready: **[watch it](${job.viewUrl})**\n\n<sub>${job.result ?? ""}</sub>`);
               await react("rocket");
             } else {
               const why = job.error ?? job.result ?? (job.status === "running" ? "still running after 28 minutes" : job.status);
