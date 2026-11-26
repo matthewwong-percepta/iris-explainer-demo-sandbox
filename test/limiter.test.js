@@ -45,3 +45,14 @@ test("limits can be a function", () => {
   assert.equal(l.check("internal-cron").limit, 5);
   assert.equal(l.check("someone").limit, 1);
 });
+
+test("a blocked check says when to retry", async () => {
+  const { rateLimitHeaders } = await import("../src/limiter.js");
+  let t = 0;
+  const l = createLimiter({ limit: 1, windowMs: 1000, now: () => t });
+  l.check("a");
+  t = 250;
+  const r = l.check("a");
+  assert.equal(r.retryAfterMs, 750);
+  assert.deepEqual(rateLimitHeaders(r), { "RateLimit-Limit": "1", "RateLimit-Remaining": "0", "Retry-After": "1" });
+});

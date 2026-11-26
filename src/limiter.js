@@ -28,10 +28,25 @@ export function createLimiter({ limit = 10, windowMs = 60_000, limits = {}, now 
     }
     const cfg = configFor(key);
     prune(log, t, cfg.windowMs);
-    if (log.length >= cfg.limit) return { allowed: false, remaining: 0, limit: cfg.limit };
+    if (log.length >= cfg.limit) {
+      // The oldest request in the window is the next to expire.
+      const retryAfterMs = log[0] + cfg.windowMs - t;
+      return { allowed: false, remaining: 0, limit: cfg.limit, retryAfterMs };
+    }
     log.push(t);
     return { allowed: true, remaining: cfg.limit - log.length, limit: cfg.limit };
   }
 
   return { check };
+}
+
+// Standard rate-limit response headers for a check() result.
+// Retry-After is in whole seconds, rounded up so clients never retry early.
+export function rateLimitHeaders(result) {
+  const headers = {
+    "RateLimit-Limit": String(result.limit),
+    "RateLimit-Remaining": String(result.remaining),
+  };
+  if (!result.allowed) headers["Retry-After"] = String(Math.ceil(result.retryAfterMs / 1000));
+  return headers;
 }
