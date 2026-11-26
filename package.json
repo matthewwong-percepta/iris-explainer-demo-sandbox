@@ -1,0 +1,8 @@
+{
+  "name": "ratelimit-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny in-memory rate limiter, used as a sandbox for the Iris explainer bot.",
+  "scripts": { "test": "node --test" }
+}
